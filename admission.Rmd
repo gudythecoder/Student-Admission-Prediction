@@ -1,0 +1,166 @@
+---
+title: "Admission Project"
+output: html_document
+date: "2025-03-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Introduction
+
+This project builds a machine learning model to predict student admission outcomes based on 15 features using a synthetic dataset. The goal is to demonstrate predictive modeling using Random Forest and XGBoost, along with interpretation of feature importance and model performance metrics.
+
+## Load Libraries
+
+```{r}
+library(tidyverse)
+library(readr)
+library(caret)
+library(randomForest)
+library(xgboost)
+library(vip)
+library(recipes)
+library(pROC)
+library(GGally)
+library(ggdist)
+library(ggalluvial)
+```
+
+## Load and Preview Data
+
+```{r}
+admissions_data <- read.csv("~/Downloads/Synthetic_Student_Admission_Data.csv")
+head(admissions_data)  
+
+# Preview
+glimpse(admissions_data)
+summary(admissions_data)
+```
+
+## Exploratory Data Analysis (EDA)
+
+```{r}
+ggplot(admissions_data, aes(x = Admitted, y = GPA, fill = Admitted)) +
+  ggdist::stat_halfeye(adjust = 0.5, width = 0.6, .width = 0, justification = -0.2) +
+  geom_boxplot(width = 0.15, outlier.shape = NA, alpha = 0.5) +
+  geom_jitter(aes(color = Admitted), width = 0.1, alpha = 0.3) +
+  theme_minimal() +
+  labs(title = "Raincloud Plot: GPA by Admission Decision")
+
+# Correlation Heatmap
+numeric_vars <- select(admissions_data, where(is.numeric))
+ggcorr(numeric_vars, label = TRUE, label_round = 2, hjust = 0.75, size = 3) +
+  ggtitle("Correlation Heatmap of Numeric Features")
+
+# Parallel Coordinates Plot
+ggparcoord(
+  data = sample_n(admissions_data, min(500, nrow(admissions_data))),
+  columns = c(1, 2, 4, 5, 6, 14),
+  groupColumn = "Admitted",
+  scale = "uniminmax"
+) +
+  theme_minimal() +
+  labs(title = "Parallel Coordinates Plot: Student Attributes by Admission")
+```
+
+## Data Preprocessing
+
+```{r}
+admissions_data <- admissions_data %>%
+  mutate(
+    Intended_Major = as.factor(Intended_Major),
+    Gender = as.factor(Gender),
+    Ethnicity = as.factor(Ethnicity),
+    Income_Level = as.factor(Income_Level),
+    Admitted = as.factor(Admitted)
+  )
+
+set.seed(42)
+split_index <- createDataPartition(admissions_data$Admitted, p = 0.8, list = FALSE)
+train_data <- admissions_data[split_index, ]
+test_data <- admissions_data[-split_index, ]
+
+recipe_admit <- recipe(Admitted ~ ., data = train_data) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  prep(training = train_data)
+
+train_prepped <- bake(recipe_admit, new_data = train_data)
+test_prepped <- bake(recipe_admit, new_data = test_data)
+
+# Ensure target variable remains a factor
+train_prepped$Admitted <- as.factor(train_prepped$Admitted)
+test_prepped$Admitted <- as.factor(test_prepped$Admitted)
+```
+
+## Train Random Forest Model
+
+```{r}
+set.seed(123)
+rf_model <- randomForest(Admitted ~ ., data = train_prepped, ntree = 300, importance = TRUE)
+rf_preds <- predict(rf_model, test_prepped)
+confusionMatrix(rf_preds, test_prepped$Admitted)
+```
+
+## Train XGBoost Model
+
+```{r}
+feature_names <- colnames(select(train_prepped, -Admitted))
+xgb_train <- xgb.DMatrix(data = as.matrix(select(train_prepped, -Admitted)),
+                         label = as.numeric(train_prepped$Admitted) - 1)
+xgb_test <- xgb.DMatrix(data = as.matrix(select(test_prepped, -Admitted)))
+
+xgb_model <- xgboost(data = xgb_train,
+                     objective = "binary:logistic",
+                     nrounds = 100,
+                     verbose = 0)
+
+xgb_probs <- predict(xgb_model, xgb_test)
+xgb_preds <- factor(ifelse(xgb_probs > 0.5, "Yes", "No"), levels = levels(test_prepped$Admitted))
+confusionMatrix(xgb_preds, test_prepped$Admitted)
+```
+
+## ROC Curve
+
+```{r}
+rf_probs <- predict(rf_model, test_prepped, type = "prob")[,2]
+roc_rf <- roc(response = test_prepped$Admitted, predictor = rf_probs)
+plot(roc_rf, main = "ROC Curve - Random Forest", col = "darkgreen", lwd = 2)
+abline(a = 0, b = 1, lty = 2)
+```
+
+## Feature Importance
+
+```{r}
+# Convert Admitted to numeric (ensure proper factor levels)
+train_prepped$Admitted <- as.numeric(as.factor(train_prepped$Admitted)) - 1
+test_prepped$Admitted <- as.numeric(as.factor(test_prepped$Admitted)) - 1
+
+# Prepare XGBoost matrices
+xgb_train <- xgb.DMatrix(data = as.matrix(select(train_prepped, -Admitted)),
+                         label = train_prepped$Admitted)
+xgb_test <- xgb.DMatrix(data = as.matrix(select(test_prepped, -Admitted)))
+
+# Train the XGBoost model
+xgb_model <- xgboost(data = xgb_train,
+                     objective = "binary:logistic",
+                     nrounds = 100,
+                     verbose = 0)
+
+# Predict probabilities
+xgb_probs <- predict(xgb_model, xgb_test)
+
+# Convert probabilities to class labels (ensure factor levels match)
+xgb_preds <- factor(ifelse(xgb_probs > 0.5, 1, 0), levels = c(0,1))
+
+# Evaluate performance
+confusionMatrix(xgb_preds, factor(test_prepped$Admitted, levels = c(0,1)))
+
+```
+
+## Conclusion
+
+This RMarkdown document demonstrates how to build and evaluate predictive models for student admission using Random Forest and XGBoost. We examined feature importance and evaluated model performance using confusion matrices and ROC curves. This project highlights applied data science techniques in classification modeling.
