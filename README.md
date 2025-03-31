@@ -26,7 +26,7 @@ ggplot2: Data visualization
 How to Run:
 
 Clone the repository
-git clone https://github.com/your-username/repository-name.git
+git clone https://github.com/gudythecoder/Student-Admission-Prediction.git
 
 Install necessary packages
 install.packages(c("tidyverse", "caret", "randomForest", "xgboost", "vip", "pROC", "GGally"))
